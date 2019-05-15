@@ -8,6 +8,9 @@
 # established in indy projects.
 # pylint: disable=invalid-name
 
+import sys
+sys.path.append('..')
+
 import argparse
 import asyncio
 import jinja2
@@ -19,10 +22,11 @@ from modules.admin import Admin, root
 from modules.admin_walletconnection import AdminWalletConnection
 from modules.basicmessage import AdminBasicMessage, BasicMessage
 from modules.trustping import AdminTrustPing, TrustPing
+from modules.protocol_discovery import ProtocolDiscovery, AdminProtocolDiscovery
 from post_message_handler import PostMessageHandler
 from websocket_message_handler import WebSocketMessageHandler
 from agent import Agent
-from message import Message
+
 
 if __name__ == "__main__":
 
@@ -75,6 +79,8 @@ if __name__ == "__main__":
     AGENT.register_module(AdminBasicMessage)
     AGENT.register_module(AdminTrustPing)
     AGENT.register_module(TrustPing)
+    AGENT.register_module(ProtocolDiscovery)
+    AGENT.register_module(AdminProtocolDiscovery)
 
     if args.wallet:
         try:

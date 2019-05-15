@@ -1,8 +1,9 @@
 import uuid
-from tests import validate_message
-from message import Message
 
-class TrustPing():
+from .message import Message
+
+
+class TrustPing(Message):
     FAMILY_NAME = "trust_ping"
     VERSION = "1.0"
     FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION + "/"
@@ -10,7 +11,7 @@ class TrustPing():
     PING = FAMILY + "ping"
     PING_RESPONSE = FAMILY + "ping_response"
 
-    class Ping():
+    class Ping:
         @staticmethod
         def build():
             return Message({
@@ -20,33 +21,31 @@ class TrustPing():
 
         @staticmethod
         def validate(message):
-            validate_message(
+            message.check_for_attrs(
                 [
                     ('@type', TrustPing.PING),
                     '@id'
-                ],
-                message
+                ]
             )
 
-    class Pong():
+    class Pong:
         @staticmethod
         def build(ping_id: str):
             return Message({
                 '@type': TrustPing.PING_RESPONSE,
-                '~thread': {'thid': ping_id }
+                '~thread': {Message.THREAD_ID: ping_id, Message.SENDER_ORDER: 0 }
             })
 
         @staticmethod
         def validate(message, ping_id):
-            validate_message(
+            message.check_for_attrs(
                 [
                     ('@type', TrustPing.PING_RESPONSE),
                     '~thread'
-                ],
-                message
+                ]
             )
 
-            validate_message(
+            Message.check_for_attrs_in_message(
                 [
                     ('thid', ping_id)
                 ],

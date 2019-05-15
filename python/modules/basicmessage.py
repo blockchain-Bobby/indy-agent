@@ -1,30 +1,24 @@
-import aiohttp
-import aiohttp_jinja2
 import datetime
-import jinja2
-import base64
 import json
-import time
 import uuid
-from indy import did, wallet, pairwise, crypto, non_secrets
+from indy import pairwise, non_secrets
 
-from helpers import str_to_bytes, serialize_bytes_json, bytes_to_str
+from python_agent_utils.messages.errors import ValidationException
 from router.simple_router import SimpleRouter
-import serializer.json_serializer as Serializer
-from agent import Agent, WalletConnectionException
-from message import Message
+from python_agent_utils.messages.message import Message
 from . import Module
+
 
 class AdminBasicMessage(Module):
     FAMILY_NAME = "admin_basicmessage"
     VERSION = "1.0"
-    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION + "/"
+    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION
 
-    MESSAGE_RECEIVED = FAMILY + "message_received"
-    SEND_MESSAGE = FAMILY + "send_message"
-    MESSAGE_SENT = FAMILY + "message_sent"
-    GET_MESSAGES = FAMILY + "get_messages"
-    MESSAGES = FAMILY + "messages"
+    MESSAGE_RECEIVED = FAMILY + "/message_received"
+    SEND_MESSAGE = FAMILY + "/send_message"
+    MESSAGE_SENT = FAMILY + "/message_sent"
+    GET_MESSAGES = FAMILY + "/get_messages"
+    MESSAGES = FAMILY + "/messages"
 
     def __init__(self, agent):
         self.agent = agent
@@ -116,9 +110,9 @@ class AdminBasicMessage(Module):
 class BasicMessage(Module):
     FAMILY_NAME = "basicmessage"
     VERSION = "1.0"
-    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION + "/"
+    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION
 
-    MESSAGE = FAMILY + "message"
+    MESSAGE = FAMILY + "/message"
 
     def __init__(self, agent):
         self.agent = agent
@@ -128,7 +122,10 @@ class BasicMessage(Module):
     async def route(self, msg: Message) -> Message:
         return await self.router.route(msg)
 
-    async def receive_message(self, msg: Message) -> Message:
+    async def receive_message(self, msg: Message):
+        r = await self.validate_common_message_blocks(msg, BasicMessage.FAMILY)
+        if not r:
+            return r
 
         # store message in the wallet
         await non_secrets.add_wallet_record(

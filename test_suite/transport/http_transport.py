@@ -4,8 +4,9 @@ import asyncio
 import logging
 from aiohttp import web, ClientSession
 
-from config import Config
-from . import BaseTransport
+from test_suite.config import Config
+from test_suite.transport import BaseTransport
+
 
 class HTTPTransport(BaseTransport):
     """ HTTP Transport
@@ -31,7 +32,7 @@ class HTTPTransport(BaseTransport):
         """ Send a message.
         """
         async with ClientSession() as session:
-            async with session.post(dest, data=body) as resp:
+            async with session.post(dest, data=body, headers={'Content-Type':'application/ssi-agent-wire'}) as resp:
                 self.logger.debug("Response Status: {}".format(resp.status))
                 self.logger.debug("Response text: {}".format(await resp.text()))
 

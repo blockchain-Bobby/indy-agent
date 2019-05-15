@@ -1,28 +1,17 @@
-import aiohttp
-import aiohttp_jinja2
-import jinja2
-import base64
-import json
-import time
-import uuid
-from indy import did, wallet, pairwise, crypto, non_secrets
-
-from helpers import str_to_bytes, serialize_bytes_json, bytes_to_str
 from router.simple_router import SimpleRouter
-import serializer.json_serializer as Serializer
-from agent import Agent, WalletConnectionException
-from message import Message
+from python_agent_utils.messages.message import Message
 from . import Module
+
 
 class AdminTrustPing(Module):
     FAMILY_NAME = "admin_trustping"
     VERSION = "1.0"
-    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION + "/"
+    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION
 
-    SEND_TRUSTPING = FAMILY + "send_trustping"
-    TRUSTPING_SENT = FAMILY + "trustping_sent"
-    TRUSTPING_RECEIVED = FAMILY + "trustping_received"
-    TRUSTPING_RESPONSE_RECEIVED = FAMILY + "trustping_response_received"
+    SEND_TRUSTPING = FAMILY + "/send_trustping"
+    TRUSTPING_SENT = FAMILY + "/trustping_sent"
+    TRUSTPING_RECEIVED = FAMILY + "/trustping_received"
+    TRUSTPING_RESPONSE_RECEIVED = FAMILY + "/trustping_response_received"
 
     def __init__(self, agent):
         self.agent = agent
@@ -59,10 +48,10 @@ class AdminTrustPing(Module):
 class TrustPing(Module):
     FAMILY_NAME = "trust_ping"
     VERSION = "1.0"
-    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION + "/"
+    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION
 
-    PING = FAMILY + "ping"
-    PING_RESPONSE = FAMILY + "ping_response"
+    PING = FAMILY + "/ping"
+    PING_RESPONSE = FAMILY + "/ping_response"
 
     def __init__(self, agent):
         self.agent = agent
@@ -74,6 +63,10 @@ class TrustPing(Module):
         return await self.router.route(msg)
 
     async def ping(self, msg: Message) -> Message:
+        r = await self.validate_common_message_blocks(msg, TrustPing.FAMILY)
+        if not r:
+            return r
+
         await self.agent.send_admin_message(
             Message({
                 '@type': AdminTrustPing.TRUSTPING_RECEIVED,
@@ -85,7 +78,7 @@ class TrustPing(Module):
             msg.context['from_did'],
             Message({
                 '@type': TrustPing.PING_RESPONSE,
-                '~thread': {'thid': msg.id}
+                '~thread': {Message.THREAD_ID: msg.id, Message.SENDER_ORDER: 0}
             })
         )
 

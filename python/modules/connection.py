@@ -5,45 +5,49 @@
 
 import json
 import base64
-import uuid
 import re
 import datetime
+from typing import Optional
 
-import aiohttp
-from indy import crypto, did, pairwise, non_secrets, error
+from indy import did, pairwise, non_secrets, error
 
 import indy_sdk_utils as utils
 import serializer.json_serializer as Serializer
+from python_agent_utils.messages.did_doc import DIDDoc
+from python_agent_utils.messages.connection import Connection as ConnectionMessage
 from router.simple_router import SimpleRouter
 from . import Module
-from message import Message
-from helpers import serialize_bytes_json, bytes_to_str, str_to_bytes
+from python_agent_utils.messages.message import Message
+
+# TODO: Move all string literal in a place which can be accessed by the test suite as well
+
 
 class BadInviteException(Exception):
     def __init__(self, msg):
         super().__init__(msg)
 
+
 class AdminConnection(Module):
     FAMILY_NAME = "admin_connections"
     VERSION = "1.0"
-    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION + "/"
+    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION
 
     # Message Types in this family
-    CONNECTION_LIST = FAMILY + "connection_list"
-    CONNECTION_LIST_REQUEST = FAMILY + "connection_list_request"
+    CONNECTION_LIST = FAMILY + "/connection_list"
+    CONNECTION_LIST_REQUEST = FAMILY + "/connection_list_request"
 
-    GENERATE_INVITE = FAMILY + "generate_invite"
-    INVITE_GENERATED = FAMILY + "invite_generated"
-    INVITE_RECEIVED = FAMILY + "invite_received"
-    RECEIVE_INVITE = FAMILY + "receive_invite"
+    GENERATE_INVITE = FAMILY + "/generate_invite"
+    INVITE_GENERATED = FAMILY + "/invite_generated"
+    INVITE_RECEIVED = FAMILY + "/invite_received"
+    RECEIVE_INVITE = FAMILY + "/receive_invite"
 
-    SEND_REQUEST = FAMILY + "send_request"
-    REQUEST_SENT = FAMILY + "request_sent"
-    REQUEST_RECEIVED = FAMILY + "request_received"
+    SEND_REQUEST = FAMILY + "/send_request"
+    REQUEST_SENT = FAMILY + "/request_sent"
+    REQUEST_RECEIVED = FAMILY + "/request_received"
 
-    SEND_RESPONSE = FAMILY + "send_response"
-    RESPONSE_SENT = FAMILY + "response_sent"
-    RESPONSE_RECEIVED = FAMILY + "response_received"
+    SEND_RESPONSE = FAMILY + "/send_response"
+    RESPONSE_SENT = FAMILY + "/response_sent"
+    RESPONSE_RECEIVED = FAMILY + "/response_received"
 
     def __init__(self, agent):
         self.agent = agent
@@ -255,10 +259,10 @@ class AdminConnection(Module):
         })
 
         await self.agent.send_message_to_endpoint_and_key(
-            my_vk,
             their_connection_key,
             their_endpoint,
-            request
+            request,
+            my_vk
         )
 
         pending_connection['@type'] = AdminConnection.REQUEST_SENT
@@ -292,6 +296,7 @@ class AdminConnection(Module):
                   }
                 }
         """
+
         their_did = msg['did']
 
         pairwise_info = json.loads(await pairwise.get_pairwise(self.agent.wallet_handle, their_did))
@@ -303,7 +308,7 @@ class AdminConnection(Module):
 
         response_msg = Message({
             '@type': Connection.RESPONSE,
-            '~thread': { 'thid': pairwise_meta['req_id'] },
+            '~thread': { Message.THREAD_ID: pairwise_meta['req_id'], Message.SENDER_ORDER: 0 },
             'connection': {
                 'did': my_did,
                 'did_doc': {
@@ -352,16 +357,16 @@ class AdminConnection(Module):
                                                'invitations',
                                                pairwise_meta['connection_key'])
 
+
 class Connection(Module):
 
     FAMILY_NAME = "connections"
     VERSION = "1.0"
-    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION + "/"
+    FAMILY = "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/" + FAMILY_NAME + "/" + VERSION
 
-    INVITE = FAMILY + "invitation"
-    REQUEST = FAMILY + "request"
-    RESPONSE = FAMILY + "response"
-
+    INVITE = FAMILY + "/invitation"
+    REQUEST = FAMILY + "/request"
+    RESPONSE = FAMILY + "/response"
 
     def __init__(self, agent):
         self.agent = agent
@@ -400,14 +405,28 @@ class Connection(Module):
                   }
                 }
         """
+        r = await self.validate_common_message_blocks(msg, Connection.FAMILY)
+        if not r:
+            return r
+
+        try:
+            ConnectionMessage.Request.validate(msg)
+        except Exception as e:
+            vk, endpoint = ConnectionMessage.extract_verkey_endpoint(msg)
+            if None in (vk, endpoint):
+                # Cannot extract verkey and endpoint hence won't send any message back.
+                print('Encountered error parsing connection request ', e)
+            else:
+                # Sending an error message back to the sender
+                err_msg = self.build_problem_report_for_connections(Connection.FAMILY, ConnectionMessage.REQUEST_NOT_ACCEPTED, str(e))
+                await self.agent.send_message_to_endpoint_and_key(vk, endpoint, err_msg)
+            return
+
         connection_key = msg.context['to_key']
 
         label = msg['label']
-        their_did = msg['connection']['did']
-        # NOTE: these values are pulled based on the minimal connectathon format. Full processing
-        #  will require full DIDDoc storage and evaluation.
-        their_vk = msg['connection']['did_doc']['publicKey'][0]['publicKeyBase58']
-        their_endpoint = msg['connection']['did_doc']['service'][0]['serviceEndpoint']
+
+        their_did, their_vk, their_endpoint = ConnectionMessage.extract_their_info(msg)
 
         # Store their information from request
         await utils.store_their_did(self.agent.wallet_handle, their_did, their_vk)
@@ -466,9 +485,6 @@ class Connection(Module):
             raise indy_error
         await self.agent.send_admin_message(pending_connection)
 
-
-
-
     async def response_received(self, msg: Message) -> Message:
         """ Process response
 
@@ -481,17 +497,36 @@ class Connection(Module):
                   }
                 }
         """
+        r = await self.validate_common_message_blocks(msg, Connection.FAMILY)
+        if not r:
+            return r
+
         my_did = msg.context['to_did']
+        if my_did is None:
+            msg[ConnectionMessage.CONNECTION], sig_verified = await self.agent.unpack_and_verify_signed_agent_message_field(
+                msg['connection~sig'])
+            if not sig_verified:
+                print('Encountered error parsing connection response. Connection request not found.')
+            else:
+                vk, endpoint = ConnectionMessage.extract_verkey_endpoint(msg)
+                if None in (vk, endpoint):
+                    # Cannot extract verkey and endpoint hence won't send any message back.
+                    print('Encountered error parsing connection response. Connection request not found.')
+                else:
+                    # Sending an error message back to the sender
+                    err_msg = self.build_problem_report_for_connections(Connection.FAMILY,
+                                                                        ConnectionMessage.RESPONSE_FOR_UNKNOWN_REQUEST,
+                                                                        "No corresponding connection request found")
+                    await self.agent.send_message_to_endpoint_and_key(vk, endpoint, err_msg)
+            return
+        # Following should return an error if key not found for given DID
         my_vk = await did.key_for_local_did(self.agent.wallet_handle, my_did)
 
         #process signed field
-        msg['connection'], sig_verified = await self.agent.unpack_and_verify_signed_agent_message_field(msg['connection~sig'])
+        msg[ConnectionMessage.CONNECTION], sig_verified = await self.agent.unpack_and_verify_signed_agent_message_field(msg['connection~sig'])
         # connection~sig remains for metadata
 
-
-        their_did = msg['connection']['did']
-        their_vk = msg['connection']['did_doc']['publicKey'][0]['publicKeyBase58']
-        their_endpoint = msg['connection']['did_doc']['service'][0]['serviceEndpoint']
+        their_did, their_vk, their_endpoint = ConnectionMessage.extract_their_info(msg)
 
         msg_vk = msg.context['from_key']
         # TODO: verify their_vk (from did doc) matches msg_vk
@@ -531,7 +566,8 @@ class Connection(Module):
                 'label': label,
                 'their_endpoint': their_endpoint,
                 'their_vk': their_vk,
-                'my_vk': my_vk
+                'my_vk': my_vk,
+                'connection_key': msg.data['connection~sig']['signer']
             })
         )
 
@@ -556,3 +592,4 @@ class Connection(Module):
         await non_secrets.delete_wallet_record(self.agent.wallet_handle,
                                                'invitations',
                                                msg.data['connection~sig']['signer'])
+
